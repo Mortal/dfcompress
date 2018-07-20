@@ -49,7 +49,7 @@ impl fmt::Display for Error {
     }
 }
 
-fn read_u32(r: &mut io::Read) -> Result<u32> {
+fn read_u32<R: io::Read>(r: &mut R) -> Result<u32> {
     let buf = &mut [0, 0, 0, 0];
     r.read_exact(buf)?;
     Ok(
@@ -60,7 +60,7 @@ fn read_u32(r: &mut io::Read) -> Result<u32> {
     )
 }
 
-fn read_u32_or_eof(r: &mut io::Read) -> Result<Option<u32>> {
+fn read_u32_or_eof<R: io::Read>(r: &mut R) -> Result<Option<u32>> {
     match read_u32(r) {
         Ok(v) => Ok(Some(v)),
         Err(e) => match e.kind {
@@ -70,7 +70,7 @@ fn read_u32_or_eof(r: &mut io::Read) -> Result<Option<u32>> {
     }
 }
 
-fn write_u32(handle: &mut io::Write, value: u32) -> Result<()> {
+fn write_u32<W: io::Write>(handle: &mut W, value: u32) -> Result<()> {
     let buf = &[
         value as u8,
         (value >> 8) as u8,
@@ -81,7 +81,7 @@ fn write_u32(handle: &mut io::Write, value: u32) -> Result<()> {
     Ok(())
 }
 
-fn read_header(stdin: &mut io::Read) -> Result<(u32, u32)> {
+fn read_header<R: io::Read>(stdin: &mut R) -> Result<(u32, u32)> {
     let version = read_u32(stdin)?;
     if version == 0 {
         return Err(ErrorKind::VersionIsZero.into());
@@ -93,43 +93,43 @@ fn read_header(stdin: &mut io::Read) -> Result<(u32, u32)> {
     Ok((version, compression))
 }
 
-pub fn dfuncompress(stdin: &mut io::Read, stdout: &mut io::Write) -> Result<()> {
-    let (version, compression) = read_header(stdin)?;
-    write_u32(stdout, version)?;
-    write_u32(stdout, 0)?;
+pub fn dfuncompress<R: io::Read, W: io::Write>(mut stdin: R, mut stdout: W) -> Result<()> {
+    let (version, compression) = read_header(&mut stdin)?;
+    write_u32(&mut stdout, version)?;
+    write_u32(&mut stdout, 0)?;
     if compression == 0 {
-        io::copy(stdin, stdout)?;
+        io::copy(&mut stdin, &mut stdout)?;
     } else {
         let mut buf = Vec::new();
         loop {
-            let n = match read_u32_or_eof(stdin)? {
+            let n = match read_u32_or_eof(&mut stdin)? {
                 Some(v) => v as u64,
                 None => break,
             };
             buf.clear();
-            ZlibDecoder::new(stdin.take(n)).read_to_end(&mut buf)?;
+            ZlibDecoder::new((&mut stdin).take(n)).read_to_end(&mut buf)?;
             stdout.write_all(&buf)?;
         }
     }
     Ok(())
 }
 
-pub fn dfcompress(stdin: &mut io::Read, stdout: &mut io::Write) -> Result<()> {
-    let (version, compression) = read_header(stdin)?;
-    write_u32(stdout, version)?;
-    write_u32(stdout, 1)?;
+pub fn dfcompress<R: io::Read, W: io::Write>(mut stdin: R, mut stdout: W) -> Result<()> {
+    let (version, compression) = read_header(&mut stdin)?;
+    write_u32(&mut stdout, version)?;
+    write_u32(&mut stdout, 1)?;
     if compression == 1 {
-        io::copy(stdin, stdout)?;
+        io::copy(&mut stdin, &mut stdout)?;
     } else {
         let mut buf = Vec::new();
         loop {
             buf.clear();
-            let mut encoder = ZlibEncoder::new(stdin.take(20000), Compression::default());
+            let mut encoder = ZlibEncoder::new((&mut stdin).take(20000), Compression::default());
             encoder.read_to_end(&mut buf)?;
             if encoder.total_in() == 0 {
                 break;
             }
-            write_u32(stdout, buf.len() as u32)?;
+            write_u32(&mut stdout, buf.len() as u32)?;
             stdout.write_all(&buf)?;
         }
     }
@@ -158,17 +158,15 @@ fn u32_tests() {
 
 #[test]
 fn compress_test() {
-    let mut buf = Vec::new();
-    buf.resize(30000, b'a');
-    let buf = {
-        let mut cursor = io::Cursor::new(buf);
-        write_u32(&mut cursor, 1234).unwrap(); // version
-        write_u32(&mut cursor, 0).unwrap(); // compression
-        cursor.into_inner()
-    };
-    let mut buf2 = Vec::new();
-    dfcompress(&mut io::Cursor::new(&buf), &mut io::Cursor::new(&mut buf2)).unwrap();
-    let mut buf3 = Vec::new();
-    dfuncompress(&mut io::Cursor::new(&buf2), &mut io::Cursor::new(&mut buf3)).unwrap();
-    assert_eq!(&buf, &buf3);
+    let mut buf = io::Cursor::new(Vec::new());
+    buf.get_mut().resize(30000, b'a');
+    write_u32(&mut buf, 1234).unwrap(); // version
+    write_u32(&mut buf, 0).unwrap(); // compression
+    buf.seek(io::SeekFrom::Start(0)).unwrap();
+    let mut buf2 = io::Cursor::new(Vec::new());
+    dfcompress(&mut buf, &mut buf2).unwrap();
+    buf2.seek(io::SeekFrom::Start(0)).unwrap();
+    let mut buf3 = io::Cursor::new(Vec::new());
+    dfuncompress(&mut buf2, &mut buf3).unwrap();
+    assert_eq!(buf.get_ref(), buf3.get_ref());
 }
