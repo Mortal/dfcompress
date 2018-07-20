@@ -53,9 +53,7 @@ fn read_u32<R: io::Read>(r: &mut R) -> Result<u32> {
     let buf = &mut [0, 0, 0, 0];
     r.read_exact(buf)?;
     Ok(
-        ((buf[3] as u32) << 24)
-            + ((buf[2] as u32) << 16)
-            + ((buf[1] as u32) << 8)
+        ((buf[3] as u32) << 24) + ((buf[2] as u32) << 16) + ((buf[1] as u32) << 8)
             + (buf[0] as u32),
     )
 }
