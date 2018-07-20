@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: LGPL-2.1+
 extern crate flate2;
 
-use flate2::read::{ZlibDecoder, ZlibEncoder};
+use flate2::read::ZlibEncoder;
+use flate2::write::ZlibDecoder;
 use flate2::Compression;
 use std::io::prelude::*;
 use std::{fmt, io, result};
@@ -98,15 +99,14 @@ pub fn dfuncompress<R: io::Read, W: io::Write>(mut stdin: R, mut stdout: W) -> R
     if compression == 0 {
         io::copy(&mut stdin, &mut stdout)?;
     } else {
-        let mut buf = Vec::new();
         loop {
             let n = match read_u32_or_eof(&mut stdin)? {
                 Some(v) => v as u64,
                 None => break,
             };
-            buf.clear();
-            ZlibDecoder::new((&mut stdin).take(n)).read_to_end(&mut buf)?;
-            stdout.write_all(&buf)?;
+            let mut decoder = ZlibDecoder::new(stdout.by_ref());
+            io::copy(&mut stdin.by_ref().take(n), decoder.by_ref())?;
+            decoder.finish()?;
         }
     }
     Ok(())
